@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+    <meta charset="UTF-8">
+    <title>Abysall Panic - Final Terror Edition</title>
+    <style>
+        body { margin: 0; overflow: hidden; background: #000; font-family: 'Courier New', monospace; color: #0f0; }
+        canvas { display: block; }
+        
+        /* HUD Joc */
+        #ui { position: absolute; top: 15px; left: 15px; pointer-events: none; z-index: 10; width: 250px; }
+        .bar-container { width: 100%; height: 12px; border: 1px solid #0f0; background: #010; margin-bottom: 8px; }
+        #health-bar, #sanity-bar, #battery-bar { width: 100%; height: 100%; transition: width 0.2s; }
+        #health-bar { background: #0f0; } #sanity-bar { background: #f0f; width: 0%; } #battery-bar { background: #ff0; }
+        
+        /* SONAR */
+        #sonar-container {
+            position: absolute; top: 20px; right: 20px;
+            width: 150px; height: 150px;
+            border: 2px solid #050; border-radius: 50%;
+            background: radial-gradient(circle, #010 0%, #000 100%);
+            overflow: hidden; z-index: 15;
+        }
+        #sonar-canvas { width: 100%; height: 100%; }
+        #crosshair { position: absolute; top: 50%; left: 50%; width: 6px; height: 6px; background: rgba(255, 255, 255, 0.4); border-radius: 50%; transform: translate(-50%, -50%); z-index: 20; }
+        
+        /* MENIU */
+        #overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: #000; display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 100; overflow: hidden; }
+        #campfire-header-img { position: absolute; top: 20px; max-height: 45px; opacity: 0.8; }
+        #menu-title { font-size: 4rem; color: #f00; text-transform: uppercase; text-shadow: 0 0 15px #f00; margin-bottom: 40px; }
+        #character-container { display: flex; gap: 80px; z-index: 102; }
+        .character-slot { position: relative; width: 220px; height: 280px; animation: bounce 2.5s ease-in-out infinite; }
+        @keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-25px); } }
+        .char-img { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: contain; transition: opacity 0.1s; }
+        .friendly { opacity: 0.9; z-index: 2; }
+        .glitch-img { opacity: 0; z-index: 1; filter: brightness(0.6); }
+        #overlay.glitch-active .friendly { opacity: 0; }
+        #overlay.glitch-active .glitch-img { opacity: 1; }
+        button { padding: 15px 50px; background: none; color: #fff; border: 2px solid #fff; cursor: pointer; text-transform: uppercase; }
+        .static-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background: url('https://upload.wikimedia.org/wikipedia/commons/5/5a/Static_noise.gif'); opacity: 0.1; pointer-events: none; z-index: 108; display: none; }
+        #overlay.glitch-active .static-overlay { display: block; }
+        .hidden { display: none !important; }
+    </style>
+</head>
+<body>
+
+    <div id="ui" class="hidden">
+        <p>INTEGRITATE</p>
+        <div class="bar-container"><div id="health-bar"></div></div>
+        <p>BATERIE (SPACE)</p>
+        <div class="bar-container"><div id="battery-bar"></div></div>
+        <p>PANICĂ</p>
+        <div class="bar-container"><div id="sanity-bar"></div></div>
+        <p>SCORE: <span id="score-val">0</span></p>
+    </div>
+
+    <div id="sonar-container" class="hidden">
+        <canvas id="sonar-canvas"></canvas>
+    </div>
+
+    <div id="crosshair" class="hidden"></div>
+
+    <div id="overlay">
+        <img src="caca.png" id="campfire-header-img">
+        <div class="static-overlay"></div>
+        <h1 id="menu-title">Abysall Panic</h1>
+        <div id="character-container">
+            <div class="character-slot">
+                <img src="peste_bun_1_fundal-removebg-preview.png" class="char-img friendly">
+                <img src="WhatsApp Image 2026-02-28 at 16.55.55-Photoroom.png" class="char-img glitch-img">
+            </div>
+            <div class="character-slot">
+                <img src="peste_bun_2_.png" class="char-img friendly">
+                <img src="WhatsApp Image 2026-02-28 at 16.57.00-Photoroom.png" class="char-img glitch-img">
+            </div>
+        </div>
+        <button id="start-btn">LANSARE</button>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+const sonarCanvas = document.getElementById('sonar-canvas');
+const sonarCtx = sonarCanvas.getContext('2d');
+const menuOverlay = document.getElementById('overlay');
+
+canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+sonarCanvas.width = 150; sonarCanvas.height = 150;
+
+let gameState = 'MENU';
+let score = 0, health = 100, sanity = 0, battery = 100, cameraAngle = 0;
+let enemies = [], bubbles = [], isRecharging = false;
+
+// =========================================
+// === CELE 8 IMAGINI UNICE PENTRU JOC ===
+// =========================================
+const JOC_FISH = {
+    calm: [
+        "peste_bun_1_fundal-removebg-preview.png", 
+        "peste_bun_2_.png", 
+        "pestebun 3-Photoroom.png", 
+        "peste bun 4-Photoroom.png"
+    ],
+    scary: [
+        "peste rau 1.png", // Inlocuieste cu numele tale scary
+        "peste rau 2.png", 
+        "image-Photoroom.png", 
+        "image-Photoroom(1).png"
+    ]
+};
+
+const gameSprites = { calm: [], scary: [], loaded: false };
+
+function loadGameImgs() {
+    const load = src => new Promise(r => { 
+        let i = new Image(); i.src = src; 
+        i.onload = () => r(i); 
+        i.onerror = () => r(null); 
+    });
+    Promise.all(JOC_FISH.calm.map(load)).then(imgs => { gameSprites.calm = imgs; });
+    Promise.all(JOC_FISH.scary.map(load)).then(imgs => { gameSprites.scary = imgs; gameSprites.loaded = true; });
+}
+loadGameImgs();
+
+// Glitch Meniu
+setInterval(() => { if(gameState === 'MENU') { menuOverlay.classList.add('glitch-active'); setTimeout(() => menuOverlay.classList.remove('glitch-active'), 500); } }, 4000);
+
+class Enemy {
+    constructor() { this.reset(); }
+    reset() {
+        this.angle = Math.random() * Math.PI * 2;
+        this.dist = 1800 + Math.random() * 800;
+        this.speed = 1.0 + Math.random() * 1.5;
+        this.idx = Math.floor(Math.random() * 4);
+        this.isScared = false;
+    }
+    update(r) {
+        if(this.isScared) { this.dist += 45; if(this.dist > 2500) this.reset(); return; }
+        this.dist -= this.speed;
+        let relAngle = this.angle - cameraAngle;
+        while (relAngle < -Math.PI) relAngle += Math.PI * 2;
+        while (relAngle > Math.PI) relAngle -= Math.PI * 2;
+        if(Math.abs(relAngle) < 0.35 && this.dist < r + 60 && battery > 10) { this.isScared = true; score += 50; }
+        if(this.dist < 65) { health -= 15; this.reset(); }
+    }
+    draw(r, san) {
+        let relAngle = this.angle - cameraAngle;
+        while (relAngle < -Math.PI) relAngle += Math.PI * 2;
+        while (relAngle > Math.PI) relAngle -= Math.PI * 2;
+        let x = (relAngle / (Math.PI / 2)) * (canvas.width / 2) + (canvas.width / 2);
+        if (x > -300 && x < canvas.width + 300) {
+            let s = (380 / this.dist) * (1 + san/60);
+            ctx.save();
+            ctx.translate(x, canvas.height/2 + Math.sin(Date.now()*0.001 + this.angle)*20);
+            let alpha = Math.max(0.05, 1 - (Math.abs(x - canvas.width/2) / (r * 1.5)));
+            let morph = Math.min(1, Math.max(0, (san - 20)/45));
+            let imgC = gameSprites.calm[this.idx], imgS = gameSprites.scary[this.idx];
+            ctx.globalAlpha = alpha;
+            if(gameSprites.loaded && imgC && imgS) {
+                ctx.globalAlpha = alpha * (1 - morph); ctx.drawImage(imgC, -70*s, -60*s, 140*s, 120*s);
+                ctx.globalAlpha = alpha * morph; ctx.drawImage(imgS, -70*s, -60*s, 140*s, 120*s);
+            } else {
+                ctx.fillStyle = "red"; ctx.beginPath(); ctx.moveTo(35*s, 0); ctx.lineTo(-25*s, -25*s); ctx.lineTo(-25*s, 25*s); ctx.fill();
+            }
+            ctx.restore();
+        }
+    }
+}
+
+function drawSonar() {
+    let centerX = 75, centerY = 75, radius = 70;
+    sonarCtx.clearRect(0, 0, 150, 150);
+    sonarCtx.strokeStyle = "#040"; sonarCtx.lineWidth = 1;
+    for(let i=1; i<=3; i++) { sonarCtx.beginPath(); sonarCtx.arc(centerX, centerY, (radius/3)*i, 0, Math.PI*2); sonarCtx.stroke(); }
+    let sweep = (Date.now() / 500) % (Math.PI * 2);
+    let g = sonarCtx.createConicGradient(sweep, centerX, centerY);
+    g.addColorStop(0, "rgba(0, 255, 0, 0.4)"); g.addColorStop(0.1, "transparent");
+    sonarCtx.fillStyle = g; sonarCtx.beginPath(); sonarCtx.arc(centerX, centerY, radius, 0, Math.PI*2); sonarCtx.fill();
+    enemies.forEach(e => {
+        let relAngle = e.angle - cameraAngle - Math.PI/2;
+        let d = Math.min(radius, (e.dist / 2500) * radius);
+        let bx = centerX + Math.cos(relAngle) * d;
+        let by = centerY + Math.sin(relAngle) * d;
+        sonarCtx.fillStyle = e.isScared ? "#fff" : "#f00";
+        sonarCtx.beginPath(); sonarCtx.arc(bx, by, 3, 0, Math.PI*2); sonarCtx.fill();
+    });
+}
+
+// Control
+window.addEventListener('mousemove', e => { if(gameState === 'PLAYING') cameraAngle += e.movementX * 0.003; });
+window.addEventListener('keydown', e => { if(e.code === 'Space') isRecharging = true; });
+window.addEventListener('keyup', e => { if(e.code === 'Space') isRecharging = false; });
+
+document.getElementById('start-btn').addEventListener('click', () => {
+    health = 100; battery = 100; sanity = 0; score = 0;
+    enemies = Array.from({length: 3}, () => new Enemy());
+    gameState = 'PLAYING';
+    menuOverlay.classList.add('hidden');
+    document.getElementById('ui').classList.remove('hidden');
+    document.getElementById('sonar-container').classList.remove('hidden');
+    document.getElementById('crosshair').classList.remove('hidden');
+    canvas.requestPointerLock();
+});
+
+function loop() {
+    if(gameState === 'PLAYING') {
+        if(isRecharging) { battery = Math.min(100, battery + 0.4); sanity += 0.8; } 
+        else { battery -= 0.012; if(sanity > 0) sanity -= 0.04; }
+        if(health <= 0) location.reload();
+
+        // --- LOGICA SCREEN SHAKE (TREMURAT) ---
+        let shakeX = 0, shakeY = 0;
+        if (sanity > 50) {
+            let intensity = (sanity - 50) / 12; // Crește progresiv
+            shakeX = (Math.random() - 0.5) * intensity;
+            shakeY = (Math.random() - 0.5) * intensity;
+        }
+
+        let sIdx = Math.min(4, Math.floor(sanity / 20));
+        let amb = ['#001133','#000822','#000411','#000208','#000'][sIdx];
+        let lgt = ['#0077ff','#0044aa','#002266','#001133','#111'][sIdx];
+        let r = (battery < 25 && Math.random() > 0.7) ? 40 : 520 - (sIdx * 80);
+
+        ctx.save();
+        ctx.translate(shakeX, shakeY); // Aplicăm tremuratul
+
+        ctx.fillStyle = amb; ctx.fillRect(0,0,canvas.width,canvas.height);
+        let g = ctx.createRadialGradient(canvas.width/2, canvas.height/2, 0, canvas.width/2, canvas.height/2, r);
+        g.addColorStop(0, lgt); g.addColorStop(1, amb);
+        ctx.fillStyle = g; ctx.fillRect(0,0,canvas.width,canvas.height);
+
+        enemies.forEach(e => { e.update(r); e.draw(r, sanity); });
+        ctx.restore(); // Revenim la normal ptr sonar și UI
+
+        drawSonar();
+        document.getElementById('health-bar').style.width = health + "%";
+        document.getElementById('battery-bar').style.width = battery + "%";
+        document.getElementById('sanity-bar').style.width = sanity + "%";
+        document.getElementById('score-val').innerText = Math.floor(score);
+    }
+    requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
